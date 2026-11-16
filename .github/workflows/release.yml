@@ -1,0 +1,30 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build archives (tests run in the ci workflow on the same push)
+        run: |
+          chmod +x build.sh
+          ./build.sh
+      - name: Verify checksums
+        run: cd dist && sha256sum -c SHA256SUMS
+      - name: Create or update GitHub release with assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/hermes-skill-rollback-guard-*.tar.gz dist/hermes-skill-rollback-guard-*.zip dist/SHA256SUMS \
+            --title "hermes-skill-rollback-guard $GITHUB_REF_NAME" \
+            --notes "Ready-to-install plugin archives. Extract into ~/.hermes/plugins/ and enable in config.yaml. Cleanup-only: clears skill_manage rollback residue on pre-fix cores, a no-op on fixed cores. Verify with: sha256sum -c SHA256SUMS" \
+          || gh release upload "$GITHUB_REF_NAME" --clobber \
+            dist/hermes-skill-rollback-guard-*.tar.gz dist/hermes-skill-rollback-guard-*.zip dist/SHA256SUMS

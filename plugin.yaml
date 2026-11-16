@@ -1,0 +1,30 @@
+name: hermes-skill-rollback-guard
+version: "0.1.0"
+description: >-
+  Cleans up the <name>.rollback-broken symlink residue that Hermes core's skill_manage batch
+  rollback leaves on builds whose rollback cleanup is symlink-blind (shutil.rmtree on a symlink,
+  ignored). Registers the supported tool_execution middleware and removes only that residue after
+  a skill_manage call — it never patches core, and only when a live canonical skill sits beside the
+  link, so it can never delete a skill's only surviving copy. A no-op once the running core carries
+  the symlink-safe fix.
+author: "ErtzFiend"
+license: "MIT"
+homepage: "https://github.com/ErtzFiend/hermes-skill-rollback-guard"
+kind: standalone
+manifest_version: 2
+requires_hermes: ">=0.22.0"
+platforms:
+  - linux
+  - darwin
+  - windows
+tags:
+  - skills
+  - rollback
+  - cleanup
+  - compatibility
+provides_middleware:
+  - tool_execution
+notes: >-
+  Cleanup-only: it uses the documented tool_execution middleware seam and the public
+  skills_tool.skill_search_dirs() API, never a core rebind. Active only while the running core
+  reports the pre-fix shape (rollback entry point present, symlink-safe helper absent).

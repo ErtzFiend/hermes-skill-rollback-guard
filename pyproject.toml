@@ -1,0 +1,15 @@
+# This is a native Hermes *directory plugin* (installed by copying its files into a Hermes
+# plugins dir, or via `hermes plugins install`) — not a pip package. It carries no
+# [project] table on purpose: the directory name has hyphens and the entry point is
+# `register(ctx)`, not a console script. This file only configures the linter.
+#
+# pytest config lives in tests/pytest.ini: the repo root is the plugin package (it holds
+# `__init__.py`), so pytest's rootdir must be the tests dir — see tests/pytest.ini.
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
