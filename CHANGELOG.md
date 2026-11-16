@@ -5,6 +5,21 @@ All notable changes to this plugin are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Residue is a symlink and nothing else.** `is_residue` now matches only symbolic links carrying
+  the `.rollback-broken` suffix — the sole shape the pre-fix rollback leaves. A regular file with
+  that name is never a candidate (it may hold unique user data), nor is a directory.
+- **The data-loss gate requires a real skill.** A live canonical sibling now counts only when it is
+  a directory containing a `SKILL.md` (or a symlink resolving into one); a directory without one no
+  longer licenses removal of the residue beside it.
+- **Cleanup is scoped to the active profile.** `skills_roots()` now returns only the active
+  profile's writable skills dir, so shared/builtin, project, `skills.create_dir` and external roots
+  — and other profiles — are never swept. The previous wider enumeration is preserved as the
+  opt-in `all_skills_roots()` (with `active_skill_root()`).
+- Test suite extended with explicit coverage: a regular file residue is never touched, a directory
+  without a `SKILL.md` leaves the residue untouched, and non-active roots are never swept.
+
 ## [0.1.0] - 2026-11-15
 
 ### Added

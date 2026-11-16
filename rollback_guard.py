@@ -30,9 +30,18 @@ Activation is a live capability probe, not a version string:
   residue is possible, so the guard runs.
 * ``unknown`` — the module is absent, unimportable, or an unrecognized shape: fail safe, no-op.
 
-Nothing is ever deleted except a path whose name ends in ``.rollback-broken`` that is a symlink
-or a regular file. A ``.rollback-broken`` *directory* — which the bug never produces — is left
-alone rather than recursively removed.
+Nothing is ever deleted except a path whose name ends in ``.rollback-broken`` that is a **symbolic
+link** — the only shape the bug produces. A regular file or a directory with that name (neither of
+which the bug produces) is never touched: a regular file may hold unique user data, and removing a
+directory would mean a recursive delete a plugin should not perform.
+
+Scope
+-----
+The default cleanup scans only the **active profile's writable skills dir** — the single tree
+``skill_manage`` installs into and therefore the only one the rollback bug can leave residue in.
+Shared/builtin, project, ``skills.create_dir`` and external roots, and every other profile, are
+deliberately **out of scope**: a plugin must never sweep a skill tree it does not own. Callers that
+genuinely need the wider tree (isolated tests, explicit backfills) use :func:`all_skills_roots`.
 
 Safety
 ------
@@ -41,11 +50,12 @@ renames the broken skill aside (``<name>.rollback-broken``) and then fails to de
 *successful* rollback has already recreated the skill under its canonical name **beside** the
 residue, so the residue is a pure duplicate and unlinking it loses nothing. So the guard removes a
 residue entry only when a **live canonical sibling** exists next to it — the base name with every
-``.rollback-broken`` suffix stripped, present as a real skill directory (or a symlink that resolves
-into one). When that sibling is absent the residue may be the *only* remaining reference to a skill
-whose restore did not complete (``_restore_snapshot`` re-raises before ``aside.rename(pre_dir)``, or
-a hand-interrupted rollback), so the guard leaves it in place. ``os.unlink`` never follows a
-symlink, so a link's target directory is never touched regardless.
+``.rollback-broken`` suffix stripped, present as a skill directory (or a symlink that resolves into
+one) that actually contains a ``SKILL.md``. When that sibling is absent, or is present but is not a
+real skill (no ``SKILL.md``), the residue may be the *only* remaining reference to a skill whose
+restore did not complete (``_restore_snapshot`` re-raises before ``aside.rename(pre_dir)``, or a
+hand-interrupted rollback), so the guard leaves it in place. ``os.unlink`` never follows a symlink,
+so a link's target directory is never touched regardless.
 """
 
 from __future__ import annotations
@@ -103,11 +113,42 @@ def core_fix_state() -> str:
     return STATE_UNKNOWN
 
 
-def skills_roots() -> list[Path]:
-    """Skill directories to scan, from the public ``skill_search_dirs()`` API.
+def active_skill_root() -> Optional[Path]:
+    """The active profile's live, writable skills dir — the one tree ``skill_manage`` installs into.
 
-    Returns the live profile skills dir first (where ``skill_manage`` operates), then the
-    configured roots, de-duplicated. Empty when the skills module is unavailable.
+    ``None`` when the public ``skill_search_dirs()`` API is unavailable or fails.
+    """
+    try:
+        from tools.skills_tool import skill_search_dirs
+    except Exception:
+        logger.debug("skills_tool unavailable; no active skill root")
+        return None
+    try:
+        _roots, active = skill_search_dirs()
+    except Exception as exc:
+        logger.debug("skill_search_dirs() failed: %s", exc)
+        return None
+    return Path(active) if active is not None else None
+
+
+def skills_roots() -> list[Path]:
+    """The skill directories the middleware cleans by default.
+
+    Exactly the active profile's writable skills root (see :func:`active_skill_root`). The rollback
+    bug only ever leaves residue in the tree ``skill_manage`` writes to, so shared/builtin, project,
+    ``skills.create_dir`` and external roots — and every other profile — are deliberately excluded:
+    a plugin must not sweep a skill tree it does not own. Empty when that root is unavailable.
+    """
+    active = active_skill_root()
+    return [active] if active is not None else []
+
+
+def all_skills_roots() -> list[Path]:
+    """Every skill root the public ``skill_search_dirs()`` API reports, de-duplicated.
+
+    The live profile skills dir first, then the configured roots (project / create-dir / external).
+    NOT used by the default cleanup — scanning these would reach shared/external/builtin dirs and
+    other profiles. Provided for isolated tests and callers that explicitly opt into the wider tree.
     """
     try:
         from tools.skills_tool import skill_search_dirs
@@ -130,13 +171,15 @@ def skills_roots() -> list[Path]:
 
 
 def is_residue(entry: Path) -> bool:
-    """True when *entry* has the residue name and is the shape the bug leaves (link or file).
+    """True when *entry* has the residue name and is the shape the bug leaves (a symlink).
 
     Identification only — it does not say the entry is safe to remove. Use
     :func:`is_safe_residue` for the removal decision.
 
-    A directory with the suffix is deliberately NOT residue here: the bug never produces one, and
-    removing it would mean a recursive delete a plugin should not perform.
+    The bug's rollback cleanup only ever fails to remove a **symlink** — ``shutil.rmtree`` refuses
+    a symbolic link. So a regular file with the suffix is deliberately NOT residue (it could be
+    unique user data), and neither is a directory with the suffix (removing it would be a recursive
+    delete a plugin should not perform).
     """
     if not entry.name.endswith(RESIDUE_SUFFIX):
         return False
@@ -144,7 +187,7 @@ def is_residue(entry: Path) -> bool:
         mode = entry.lstat().st_mode
     except OSError:
         return False
-    return stat.S_ISLNK(mode) or stat.S_ISREG(mode)
+    return stat.S_ISLNK(mode)
 
 
 def _strip_residue_suffixes(name: str) -> str:
@@ -161,8 +204,9 @@ def _has_live_canonical_sibling(entry: Path) -> bool:
     This is the data-loss gate. A successful rollback recreates the skill under its canonical
     name next to the residue, so the residue is redundant; a failed or interrupted rollback can
     leave the residue as the *only* surviving reference, in which case this returns False and the
-    guard keeps its hands off. The sibling must be a real directory (or a symlink resolving into
-    one) — a broken sibling link means the restore did not land, so we also stay out.
+    guard keeps its hands off. The sibling must be a real skill directory — a directory containing
+    a ``SKILL.md`` (or a symlink resolving into one). A directory without a ``SKILL.md``, or a
+    broken sibling link (the restore did not land), does not qualify, so we also stay out.
     """
     base = _strip_residue_suffixes(entry.name)
     if base == entry.name or not base:  # no residue suffix, or an empty base name
@@ -171,9 +215,11 @@ def _has_live_canonical_sibling(entry: Path) -> bool:
     if sibling == entry:
         return False
     try:
-        # is_dir() follows symlinks: a live skill dir or a link into one both qualify, a broken
-        # link does not.
-        return sibling.is_dir()
+        # is_dir()/is_file() follow symlinks: a live skill dir or a link into one both qualify, a
+        # broken link does not. A skill dir is only a live canonical skill if it carries SKILL.md.
+        if not sibling.is_dir():
+            return False
+        return (sibling / "SKILL.md").is_file()
     except OSError:
         return False
 

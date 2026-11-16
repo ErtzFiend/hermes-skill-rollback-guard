@@ -4,24 +4,25 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import rollback_guard as g
-from _support import link_skill, plant_residue, plant_safe_residue
+from _support import link_skill, plant_residue, plant_safe_residue, unfix_core
 
 
-def test_is_residue_only_matches_suffixed_links_and_files(tmp_path):
+def test_is_residue_matches_only_symlinks_with_the_suffix(tmp_path):
     link = plant_residue(tmp_path / "a.rollback-broken", tmp_path / "gone")
     real_file = tmp_path / "b.rollback-broken"
-    real_file.write_text("x")
+    real_file.write_text("x")                 # a regular file is never the bug's shape
     real_dir = tmp_path / "c.rollback-broken"
     real_dir.mkdir()
     live_skill = tmp_path / "demo"
     live_skill.mkdir()
 
     assert g.is_residue(link) is True
-    assert g.is_residue(real_file) is True
-    assert g.is_residue(real_dir) is False  # never a directory: no recursive delete
+    assert g.is_residue(real_file) is False   # could be unique user data: never touched
+    assert g.is_residue(real_dir) is False    # never a directory: no recursive delete
     assert g.is_residue(live_skill) is False
     assert g.is_residue(tmp_path / "other.txt") is False
 
@@ -44,7 +45,8 @@ def test_chained_residue_resolves_to_the_true_canonical_name(tmp_path):
     root = tmp_path / "skills"
     target = tmp_path / "real_skill"
     target.mkdir()
-    link_skill(root, "demo", target)             # the live skill
+    (target / "SKILL.md").write_text("# demo\n")  # a live skill carries SKILL.md
+    link_skill(root, "demo", target)              # the live skill
     chained = plant_residue(root / "demo.rollback-broken.rollback-broken", target)
 
     assert g.is_safe_residue(chained) is True     # base 'demo' strips to the live sibling
@@ -279,14 +281,72 @@ def test_guard_tool_execution_survives_a_raising_cleanup(monkeypatch):
     assert g.guard_tool_execution(tool_name="skill_manage", args={}, next_call=next_call) == "TOOL-RESULT"
 
 
-def test_skills_roots_deduplicates(monkeypatch):
-    from pathlib import Path
+class _FakeSkillsTool:
+    """Module stand-in for ``tools.skills_tool`` exposing only ``skill_search_dirs``."""
 
-    class FakeSkills:
-        @staticmethod
-        def skill_search_dirs():
-            d = Path("/tmp/skills-x")
-            return [(1, d), (2, d)], d
+    def __init__(self, roots, active):
+        self._roots = roots
+        self._active = active
 
-    monkeypatch.setitem(__import__("sys").modules, "tools.skills_tool", FakeSkills)
-    assert g.skills_roots() == [Path("/tmp/skills-x")]
+    def skill_search_dirs(self):
+        return self._roots, self._active
+
+
+def test_skills_roots_is_the_active_profile_root_only(monkeypatch):
+    """Default cleanup scopes to the active profile writable root — never shared/project/external."""
+    active = Path("/tmp/active-profile-skills")
+    shared = Path("/tmp/shared-skills")           # builtin/external/shared: not ours to sweep
+    project = Path("/tmp/project-skills")
+    monkeypatch.setitem(sys.modules, "tools.skills_tool",
+                        _FakeSkillsTool([(1, project), (3, shared)], active))
+
+    assert g.active_skill_root() == active
+    assert g.skills_roots() == [active]                       # scoped, not the wider tree
+    assert g.all_skills_roots() == [active, project, shared]  # wider tree still available
+
+
+def test_guard_once_leaves_non_active_roots_untouched(tmp_path, monkeypatch):
+    """A residue in a shared/other-profile root is never swept by the default cleanup."""
+    active = tmp_path / "profile" / "skills"
+    shared = tmp_path / "shared-skills"
+    live = tmp_path / "live"
+    active_residue = plant_safe_residue(active, "mine", tmp_path / "gone-a", link_dir=live / "mine")
+    shared_residue = plant_safe_residue(shared, "theirs", tmp_path / "gone-b", link_dir=live / "theirs")
+    monkeypatch.setitem(sys.modules, "tools.skills_tool",
+                        _FakeSkillsTool([(3, shared)], active))
+
+    with unfix_core():
+        removed = g.guard_once()
+
+    assert removed == [active_residue]        # ours: cleaned
+    assert not os.path.lexists(active_residue)
+    assert os.path.lexists(shared_residue)    # not ours: never touched
+
+
+def test_regular_file_residue_is_never_touched(tmp_path):
+    """The bug only ever leaves a symlink; a regular file is unique data and stays intact."""
+    root = tmp_path / "skills"
+    (root / "demo").mkdir(parents=True)
+    (root / "demo" / "SKILL.md").write_text("# live demo\n")   # a genuine live sibling
+    precious = root / "demo.rollback-broken"
+    precious.write_text("unique user data, not a symlink\n")
+
+    assert not g.is_residue(precious)
+    assert g.find_residue([root]) == []
+    removed, failed = g.clean_residue([root])
+    assert removed == [] and failed == []
+    assert precious.read_text() == "unique user data, not a symlink\n"
+
+
+def test_directory_without_skill_md_sibling_is_preserved(tmp_path):
+    """A live-looking sibling that is not a real skill (no SKILL.md) never licenses removal."""
+    root = tmp_path / "skills"
+    (root / "demo").mkdir(parents=True)          # sibling dir, but no SKILL.md
+    (root / "demo" / "notes.txt").write_text("not a skill\n")
+    residue = plant_residue(root / "demo.rollback-broken", tmp_path / "gone")
+
+    assert not g.is_safe_residue(residue)
+    assert g.find_residue([root]) == []
+    removed, _failed = g.clean_residue([root])
+    assert removed == []
+    assert os.path.lexists(residue)

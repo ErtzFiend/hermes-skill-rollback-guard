@@ -150,13 +150,17 @@ def link_skill(root: Path, name: str, target: Path) -> Path:
 def plant_safe_residue(root: Path, name: str, target: Path, *, link_dir: Path) -> Path:
     """Plant residue *and* the live canonical skill beside it, the shape the guard may remove.
 
-    ``root/name`` becomes a live skill (a symlink into *link_dir*, created empty if missing) and
+    ``root/name`` becomes a live skill — a symlink into *link_dir* (created with a ``SKILL.md``
+    if missing, since a skill dir is only "live" when it carries one) — and
     ``root/<name>.rollback-broken`` the leftover link, exactly as a *successful* rollback leaves
     them.
     """
     root.mkdir(parents=True, exist_ok=True)
     if not link_dir.exists():
         link_dir.mkdir(parents=True, exist_ok=True)
+    skill_md = link_dir / "SKILL.md"
+    if not skill_md.exists():
+        skill_md.write_text(f"# {name}\n")
     link_skill(root, name, link_dir)
     return plant_residue(root / f"{name}{g.RESIDUE_SUFFIX}", target)
 

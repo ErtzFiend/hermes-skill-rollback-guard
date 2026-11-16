@@ -30,24 +30,32 @@ plugin is a no-op** and you can uninstall it.
 ## What the plugin does
 
 It registers the documented `tool_execution` middleware. After a `skill_manage` call it scans the
-skill search dirs (the public `skills_tool.skill_search_dirs()` API) and unlinks residue
-`<name>.rollback-broken` entries — **and only those whose live canonical skill sits right beside
-them**. It never patches core, never rebinds a core symbol, and touches nothing else. The tool
-result is passed through unchanged.
+**active profile's writable skills directory** — the only tree `skill_manage` installs into, obtained
+from the public `skills_tool.skill_search_dirs()` API — and unlinks residue `<name>.rollback-broken`
+**symlinks**, and only those whose live canonical skill sits right beside them. Shared/builtin,
+project, `skills.create_dir` and external roots, and every other profile, are deliberately out of
+scope: a plugin must not sweep a skill tree it does not own. It never patches core, never rebinds a
+core symbol, and touches nothing else. The tool result is passed through unchanged.
 
 ## Safety — it cannot eat your skills
 
-Unlinking a residue link is only allowed when a **live canonical sibling** exists next to it: the
-base name with every `.rollback-broken` suffix stripped, present as a real skill directory (or a
-symlink that resolves into one). After a *successful* rollback the skill has already been recreated
-under its canonical name, so the residue is a pure duplicate. When that sibling is **absent** the
-residue may be the *only remaining reference* to a skill whose restore did not complete — the guard
-leaves it in place and logs it. Concretely:
+Unlinking a residue is only allowed when a **live canonical sibling** exists next to it: the base
+name with every `.rollback-broken` suffix stripped, present as a skill directory (or a symlink that
+resolves into one) that actually contains a `SKILL.md`. After a *successful* rollback the skill has
+already been recreated under its canonical name, so the residue is a pure duplicate. When that
+sibling is absent — or present but not a real skill (no `SKILL.md`) — the residue may be the *only
+remaining reference* to a skill whose restore did not complete; the guard leaves it in place and logs
+it. Concretely:
 
-- `os.unlink` never follows a symlink, so a residue link's **target directory is never touched**.
+- Only a `.rollback-broken` **symlink** is ever a candidate — the sole shape the bug produces.
+  `os.unlink` never follows a symlink, so a residue link's **target directory is never touched**.
+- A `.rollback-broken` **regular file** is never touched — it may hold unique user data.
 - A `.rollback-broken` **directory** (which the bug never produces) is never removed — no recursive
   delete.
-- Residue with no live canonical sibling — a failed or hand-interrupted restore — is **preserved**.
+- Residue with no live canonical sibling, or a sibling without a `SKILL.md` — a failed or
+  hand-interrupted restore — is **preserved**.
+- Cleanup is scoped to the active profile's writable skill root; shared/external/builtin roots and
+  other profiles are never scanned.
 - On an already-fixed or unrecognized core the guard does nothing at all.
 
 ## Capability guard
@@ -86,8 +94,10 @@ and the public `skills_tool` API.
   call. (You can clean the backlog now with `rollback_guard.clean_residue()`.)
 - **Only while core reports `unfixed`.** On a core that already carries the symlink-safe fix the
   guard is inert by design, so it will not mask the fix or double-clean.
-- **Skill dirs only.** It scans the directories `skills_tool.skill_search_dirs()` returns, to a
-  depth of two (the depth the batch paths use).
+- **Skill dirs only.** It scans the active profile's writable skills dir (the active root from
+  `skills_tool.skill_search_dirs()`), to a depth of two (the depth the batch paths use).
+  Shared/builtin, project, `skills.create_dir` and external roots, and other profiles, are out of
+  scope by design — `all_skills_roots()` exposes the wider tree for explicit use.
 - **No automatic remediation of a failed restore.** If a residue is the only surviving copy, the
   guard preserves it and logs the path; recovery is a human decision.
 - **Middleware seam required.** On a Hermes build that does not expose the `tool_execution`
