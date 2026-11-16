@@ -1,5 +1,7 @@
 # hermes-skill-rollback-guard
 
+![hermes-skill-rollback-guard](assets/banner.png)
+
 A native Hermes plugin that clears the `<name>.rollback-broken` symlink residue left behind by
 `skill_manage`'s batch **rollback** on Hermes builds whose rollback cleanup is symlink-blind.
 
@@ -125,6 +127,21 @@ target survive, and that a residue which is a skill's only surviving copy is pre
 
 CI (`.github/workflows/ci.yml`) runs the suite against a pinned Hermes checkout; the release
 workflow builds archives on a `v*` tag and attaches them to the GitHub release.
+
+## Artwork
+
+`assets/banner.png` is AI-generated, not drawn by hand. It was rendered on a local ComfyUI
+instance with the **FLUX.1 [dev]** (fp8) diffusion model at 1536×640; the wordmark
+("Skill Rollback Guard"), the "SAFE SKILL OPERATIONS" eyebrow and the tagline
+("Clean recovery. Trusted skills.") are not diffusion output — they are overlaid deterministically
+so the wording is exact, because diffusion renders text unreliably.
+
+The artwork is **not covered by the MIT licence below**, which applies to the plugin source only.
+The FLUX.1 [dev] model weights are released by Black Forest Labs under the
+**FLUX.1 [dev] Non-Commercial License**; Black Forest Labs states it claims no ownership rights in
+the model's outputs and that outputs may be used for any purpose (including commercially) except to
+train a competing model. Verify the current model licence before any commercial redistribution of
+the image.
 
 ## License
 
